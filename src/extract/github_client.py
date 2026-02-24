@@ -15,6 +15,7 @@ from src.config import (
     SEARCH_QUERY,
     SEARCH_SORT,
 )
+from src.utils.rate_limit import process_response
 
 logger = logging.getLogger(__name__)
 
@@ -58,9 +59,7 @@ def fetch_repositories_page(page: int) -> tuple[list[dict], int | None]:
     for attempt in range(MAX_RETRIES):
         try:
             resp = requests.get(url, headers=headers, timeout=30)
-            remaining = resp.headers.get("X-RateLimit-Remaining")
-            if remaining is not None:
-                logger.debug("Rate limit remaining: %s", remaining)
+            process_response(resp)
 
             if resp.status_code == 403:
                 reset_at = resp.headers.get("X-RateLimit-Reset")

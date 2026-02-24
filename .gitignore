@@ -5,6 +5,7 @@ checkpoint.json
 # Env and logs
 .env
 *.log
+logs/
 
 # Python
 .venv/

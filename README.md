@@ -54,6 +54,38 @@ GitHub Search API (paginated)
 
 ---
 
+## Rate limit monitoring
+
+The pipeline includes production-style **rate limit monitoring** so you can observe usage and avoid unnecessary 403s.
+
+**GitHub API limits**
+
+- **Unauthenticated**: 60 requests/hour (core), 10 requests/min for search.
+- **Authenticated** (with `GITHUB_TOKEN`): 5,000 requests/hour (core), 30/min for search.
+
+Each response includes `X-RateLimit-Limit`, `X-RateLimit-Remaining`, and `X-RateLimit-Reset` (Unix timestamp). Exceeding the limit returns `403` and blocks until the reset time.
+
+**Monitoring approach**
+
+- After **every** API request, the client calls `src.utils.rate_limit` to:
+  1. **Log** limit, remaining, and reset time (human-readable UTC) at INFO.
+  2. **Append** a JSON line to `logs/rate_limit_metrics.jsonl` (timestamp, limit, remaining, reset_time) for later analysis.
+  3. **Optionally pause**: if `remaining < 5`, the process sleeps until the reset time, then continues.
+
+**Auto-pause strategy**
+
+- When `X-RateLimit-Remaining` drops below 5, the pipeline logs a warning and sleeps until `X-RateLimit-Reset` before making the next request. That avoids hitting 403 and keeps runs predictable. The existing 403 retry (wait then retry) still applies if a limit is hit despite this.
+
+**Why this matters in production**
+
+- **Observability**: Structured logs and a JSONL metrics file give a clear history of rate limit usage per run.
+- **Stability**: Proactive pause reduces 403s and avoids backoff storms when running many pages or multiple jobs.
+- **Capacity planning**: You can inspect `logs/rate_limit_metrics.jsonl` to see how close you get to the limit and tune batch size or schedule.
+
+The `logs/` directory is created automatically on first use and is listed in `.gitignore`.
+
+---
+
 ## Medallion design
 
 | Layer   | Format  | Content |
@@ -96,6 +128,8 @@ GitHubAPIFlow/
 ├── config/
 │   └── search_queries.yaml  # Search query, per_page, sort, order (edit to add more repos)
 ├── checkpoint.json          # Created at runtime
+├── logs/
+│   └── rate_limit_metrics.jsonl  # Created at runtime (rate limit metrics)
 ├── data/
 │   ├── raw/yyyy-mm-dd/      # page_1.json, page_2.json, ...
 │   ├── bronze/yyyy-mm-dd/   # repositories.parquet
@@ -118,8 +152,10 @@ GitHubAPIFlow/
     ├── silver/
     │   ├── schema.py
     │   └── writer.py
-    └── gold/
-        └── writer.py
+    ├── gold/
+    │   └── writer.py
+    └── utils/
+        └── rate_limit.py   # Rate limit logging, metrics, auto-pause
 ```
 
 ---
