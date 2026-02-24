@@ -44,9 +44,8 @@ CUMULATIVE_SILVER_DIR = DATA_DIR / "silver" / "cumulative"
 CUMULATIVE_GOLD_DIR = DATA_DIR / "gold" / "cumulative"
 CHECKPOINT_FILE = PROJECT_ROOT / "checkpoint.json"
 
-# LLM enrichment (second pipeline)
+# LLM enrichment: single file (pipeline writes empty enrichment cols; run_llm_enrichment fills in place)
 GOLD_TOP_REPOS_PATH = GOLD_DIR / "top_repositories.csv"
-GOLD_TOP_REPOS_ENRICHED_PATH = GOLD_DIR / "top_repositories_enriched.csv"
 
 # Retry
 MAX_RETRIES = 5

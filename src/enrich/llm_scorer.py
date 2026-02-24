@@ -12,6 +12,8 @@ logger = logging.getLogger(__name__)
 # Env (loaded in run_llm_enrichment; openai not required at import time)
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
 
+MAX_SUMMARY_CHARS = 6000
+
 
 SYSTEM_PROMPT = """You are a data-engineering analyst. Score the given README and respond with valid JSON only, no markdown.
 Output exactly this structure:
@@ -81,7 +83,7 @@ def score_readme(
             "readme_quality_score": int(data.get("readme_quality_score", 0)),
             "uses_cloud_services": str(data.get("uses_cloud_services", "None")).strip() or "None",
             "stack_mentioned": str(data.get("stack_mentioned", "None")).strip() or "None",
-            "summary": str(data.get("summary", "")).strip()[:500],
+            "summary": str(data.get("summary", "")).strip()[:MAX_SUMMARY_CHARS],
         }
     except Exception as e:
         logger.warning("LLM score failed for %s: %s", repo_name, e)

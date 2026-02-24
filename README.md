@@ -161,12 +161,12 @@ Weights (0.6, 0.3, 0.1) emphasize stars, then forks, then recency. They can be t
 
 A **second pipeline** enriches `top_repositories.csv` with LLM-derived scores: README quality, cloud usage (AWS/GCP/Azure), and stack mentioned. It is separate from the main ingestion; run it after gold ranking.
 
-**Flow**
+**Flow (single file)**
 
-1. Read **`data/gold/top_repositories.csv`** (and **`data/gold/top_repositories_enriched.csv`** if it already exists).
-2. Select up to **`--limit`** repos that do **not** yet have `llm_scored_at` (by ranking order).
-3. For each: fetch README via GitHub API, call OpenAI to score, then append columns and set `llm_scored_at`.
-4. Save/update **`data/gold/top_repositories_enriched.csv`** (same rows as top_repositories plus enrichment columns).
+1. The main pipeline writes **`data/gold/top_repositories.csv`** with enrichment columns present but empty.
+2. **`run_llm_enrichment.py`** reads that same file, selects up to **`--limit`** repos without `llm_scored_at` (by ranking order).
+3. For each: fetch README via GitHub API, call OpenAI to score, then set the enrichment columns and `llm_scored_at`.
+4. Writes back to **`data/gold/top_repositories.csv`** (enrichment columns filled in place for processed rows).
 
 **Usage**
 
@@ -205,15 +205,13 @@ Gold layer outputs and their schemas (column names and purpose):
 | **repos_by_language.parquet** | Parquet | `language`, `repo_count` |
 | **repos_by_stars_range.parquet** | Parquet | `stars_range`, `repo_count` |
 | **repos_by_year.parquet** | Parquet | `created_year`, `repo_count` |
-| **top_repositories.csv** | CSV | `repo_id`, `name`, `repo_url`, `stars`, `forks`, `updated_at`, `language`, `recency_factor`, `score`, `ranking` |
-| **top_repositories_enriched.csv** | CSV | Same as top_repositories plus `readme_quality_score`, `uses_cloud_services`, `stack_mentioned`, `llm_summary`, `llm_scored_at` |
+| **top_repositories.csv** | CSV | `repo_id`, `name`, `repo_url`, `stars`, `forks`, `updated_at`, `language`, `recency_factor`, `score`, `ranking`, plus enrichment (empty until run): `readme_quality_score`, `uses_cloud_services`, `stack_mentioned`, `llm_summary`, `llm_scored_at` |
 
 **Locations**
 
 - **Daily:** `data/gold/yyyy-mm-dd/` — repositories.csv, repos_by_*.parquet, profile.json.
 - **Cumulative:** `data/gold/cumulative/` — same files, built from cumulative silver.
-- **Ranking:** `data/gold/top_repositories.csv` — single file at gold root; built from cumulative silver, score 0–100, sorted by score descending.
-- **Enriched:** `data/gold/top_repositories_enriched.csv` — optional; produced by `run_llm_enrichment.py` with LLM score columns.
+- **Ranking:** `data/gold/top_repositories.csv` — single file at gold root; built from cumulative silver (score 0–100). Includes empty enrichment columns; `run_llm_enrichment.py` fills them in place.
 
 ---
 

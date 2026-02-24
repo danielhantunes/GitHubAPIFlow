@@ -1,13 +1,12 @@
 """
-Enrichment runner: load gold top repos, select unscored up to limit, fetch README + LLM score, save enriched CSV.
-Idempotent and resumable; only repos without llm_scored_at are processed.
+Enrichment runner: load top_repositories.csv, select unscored up to limit, fetch README + LLM score, write back to same file.
+Idempotent and resumable; only repos without llm_scored_at are processed. Single file: pipeline writes empty enrichment cols; this script fills them.
 """
 import logging
-from pathlib import Path
 
 import pandas as pd
 
-from src.config import GOLD_TOP_REPOS_ENRICHED_PATH, GOLD_TOP_REPOS_PATH
+from src.config import GOLD_TOP_REPOS_PATH
 from src.enrich.llm_scorer import score_readme, utc_now_iso
 from src.enrich.readme_fetcher import fetch_readme, parse_owner_repo
 
@@ -25,35 +24,21 @@ LLM_COLUMNS = [
 def _ensure_llm_columns(df: pd.DataFrame) -> pd.DataFrame:
     for col in LLM_COLUMNS:
         if col not in df.columns:
-            df[col] = "" if col == "llm_scored_at" else pd.NA
+            df[col] = ""
     return df
 
 
-def load_base_and_enriched() -> pd.DataFrame:
+def load_top_repositories() -> pd.DataFrame:
     """
-    Load base top_repositories and merge with existing enriched data if present.
-    Result has all base columns plus LLM columns (empty for never-scored repos).
+    Load data/gold/top_repositories.csv (single file with base + enrichment columns).
+    Pipeline writes it with empty enrichment cols; run_llm_enrichment fills them in place.
     """
     if not GOLD_TOP_REPOS_PATH.exists():
-        logger.warning("Base gold file not found: %s", GOLD_TOP_REPOS_PATH)
+        logger.warning("Gold file not found: %s", GOLD_TOP_REPOS_PATH)
         return pd.DataFrame()
 
-    base = pd.read_csv(GOLD_TOP_REPOS_PATH)
-    base = _ensure_llm_columns(base.copy())
-
-    if GOLD_TOP_REPOS_ENRICHED_PATH.exists():
-        try:
-            enriched = pd.read_csv(GOLD_TOP_REPOS_ENRICHED_PATH)
-            # Keep only repo_id + LLM columns from enriched to avoid duplicating base columns
-            enrich_cols = [c for c in LLM_COLUMNS if c in enriched.columns]
-            if enrich_cols:
-                subset = enriched[["repo_id"] + enrich_cols].drop_duplicates(subset=["repo_id"], keep="last")
-                base = base.drop(columns=[c for c in LLM_COLUMNS if c in base.columns], errors="ignore")
-                base = base.merge(subset, on="repo_id", how="left")
-        except Exception as e:
-            logger.warning("Could not load enriched file, starting fresh: %s", e)
-    base = _ensure_llm_columns(base)
-    return base
+    df = pd.read_csv(GOLD_TOP_REPOS_PATH)
+    return _ensure_llm_columns(df.copy())
 
 
 def is_scored(row: pd.Series) -> bool:
@@ -65,9 +50,9 @@ def is_scored(row: pd.Series) -> bool:
 
 def run_enrichment(limit: int = 10, model: str = "gpt-4o-mini") -> int:
     """
-    Enrich up to `limit` repos that do not yet have llm_scored_at. Returns number enriched.
+    Enrich up to `limit` repos that do not yet have llm_scored_at. Writes back to top_repositories.csv.
     """
-    df = load_base_and_enriched()
+    df = load_top_repositories()
     if df.empty:
         return 0
 
@@ -93,8 +78,8 @@ def run_enrichment(limit: int = 10, model: str = "gpt-4o-mini") -> int:
         logger.info("Enriched repo_id=%s %s (quality=%s).", repo_id, name, result.get("readme_quality_score"))
 
     if enriched_count > 0:
-        GOLD_TOP_REPOS_ENRICHED_PATH.parent.mkdir(parents=True, exist_ok=True)
-        df.to_csv(GOLD_TOP_REPOS_ENRICHED_PATH, index=False)
-        logger.info("Saved %s to %s.", GOLD_TOP_REPOS_ENRICHED_PATH.name, GOLD_TOP_REPOS_ENRICHED_PATH.parent)
+        GOLD_TOP_REPOS_PATH.parent.mkdir(parents=True, exist_ok=True)
+        df.to_csv(GOLD_TOP_REPOS_PATH, index=False)
+        logger.info("Saved %s.", GOLD_TOP_REPOS_PATH)
 
     return enriched_count

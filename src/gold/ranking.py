@@ -10,6 +10,15 @@ import pandas as pd
 
 from src.config import CUMULATIVE_SILVER_DIR, GOLD_DIR
 
+# Enrichment columns (empty in pipeline; filled by run_llm_enrichment)
+ENRICHMENT_COLUMNS = [
+    "readme_quality_score",
+    "uses_cloud_services",
+    "stack_mentioned",
+    "llm_summary",
+    "llm_scored_at",
+]
+
 # Score weights: popularity (stars, forks) and recency
 STARS_WEIGHT = 0.6
 FORKS_WEIGHT = 0.3
@@ -93,7 +102,8 @@ def build_ranking(silver_path: Path | None = None, output_path: Path | None = No
     Score formula: raw = stars*0.6 + forks*0.3 + recency_factor*0.1; then score is min-max
     normalized to 0-100 (best repo = 100, worst = 0). recency_factor = 1 / (days_since_update + 1).
 
-    Output columns: repo_id, name, repo_url, stars, forks, updated_at, language, recency_factor, score, ranking.
+    Output columns: repo_id, name, repo_url, stars, forks, updated_at, language, recency_factor, score, ranking,
+    plus enrichment columns (empty): readme_quality_score, uses_cloud_services, stack_mentioned, llm_summary, llm_scored_at.
     score is in range 0-100.
     Saves to data/gold/top_repositories.csv by default.
     """
@@ -107,7 +117,7 @@ def build_ranking(silver_path: Path | None = None, output_path: Path | None = No
         empty_cols = [
             "repo_id", "name", "repo_url", "stars", "forks", "updated_at", "language",
             "recency_factor", "score", "ranking",
-        ]
+        ] + ENRICHMENT_COLUMNS
         pd.DataFrame(columns=empty_cols).to_csv(output_path, index=False, encoding="utf-8")
         return output_path
 
@@ -130,10 +140,13 @@ def build_ranking(silver_path: Path | None = None, output_path: Path | None = No
     df = df.drop(columns=["_raw_score"])
     df["ranking"] = range(1, len(df) + 1)
 
+    for col in ENRICHMENT_COLUMNS:
+        df[col] = ""
+
     out_cols = [
         "repo_id", "name", "repo_url", "stars", "forks", "updated_at", "language",
         "recency_factor", "score", "ranking",
-    ]
+    ] + ENRICHMENT_COLUMNS
     out_cols = [c for c in out_cols if c in df.columns]
     df[out_cols].to_csv(output_path, index=False, encoding="utf-8")
 
