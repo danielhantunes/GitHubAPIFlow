@@ -17,7 +17,7 @@ from src.extract import fetch_repositories_page, load_checkpoint, save_checkpoin
 from src.raw import write_raw_page
 from src.bronze import raw_to_bronze
 from src.silver import bronze_to_silver, merge_bronze_into_cumulative_silver
-from src.gold import build_cumulative_gold, silver_to_gold
+from src.gold import build_cumulative_gold, build_ranking, silver_to_gold
 
 import logging
 logger = logging.getLogger(__name__)
@@ -58,6 +58,7 @@ def run_ingestion(run_date: date | None = None) -> None:
     # --- Cumulative: merge into cumulative silver, then rebuild cumulative gold ---
     merge_bronze_into_cumulative_silver(run_date=run_date)
     build_cumulative_gold()
+    build_ranking()
 
 
 def main() -> None:

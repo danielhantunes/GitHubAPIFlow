@@ -17,13 +17,13 @@ GitHub Search API (paginated)
         ↓
    [Silver]  data/silver/yyyy-mm-dd/year=.../month=.../  (deduped, schema, partitioned)
         ↓
-   [Gold]    data/gold/yyyy-mm-dd/*.parquet  (aggregations)
+   [Gold]    data/gold/yyyy-mm-dd/  (aggregations, repositories.csv, profile.json) + data/gold/top_repositories.csv (ranking)
 ```
 
 - **Raw**: Immutable copy of API responses; one JSON file per page per day.
 - **Bronze**: Normalized, single-schema Parquet (repo_id, repo_name, owner, description, language, stars, forks, created_at, updated_at).
 - **Silver**: Deduplicated by `repo_id` (latest `updated_at` kept), schema enforced, `watermark_hash` (row-version key) and `ingestion_timestamp` added, partitioned by repository `created_at` year/month.
-- **Gold**: Simple aggregations: repositories by language, by stars range, by year (created_at).
+- **Gold**: Aggregations (by language, stars range, year), `repositories.csv` with links, `top_repositories.csv` ranked by score (0–100), and profiling (`profile.json`).
 
 ---
 
@@ -34,6 +34,10 @@ GitHub Search API (paginated)
 - **Stop condition**: Stop when the API returns **no items** for a page, fewer than `per_page` items, or when reaching **page 10** (GitHub returns at most **1000** search results; page 11 returns 422).
 - **Checkpoint**: After each successful page fetch and raw write, `checkpoint.json` is updated with `last_page_processed` (and optional `run_date`). On the next run, the pipeline resumes from `last_page_processed + 1`.
 - **Idempotency**: Re-running the pipeline continues from the checkpoint; already-written raw files for that page/date are overwritten if you re-fetch the same page (same run date). Bronze/Silver/Gold are overwritten for the same run date. So “run once per day” is naturally idempotent for that day; “run multiple times per day” will append new pages and then reprocess the whole day’s raw into bronze/silver/gold.
+
+---
+
+- **Pipeline order**: Extract (paginated) → Raw → Bronze → Silver → Daily gold → Merge into cumulative silver → Cumulative gold → Ranking (`top_repositories.csv`). If a run fails mid-way, the next run resumes from the last checkpoint; partial outputs already written are left as-is.
 
 ---
 
@@ -49,7 +53,7 @@ GitHub Search API (paginated)
 
 ## Rate limits and retries
 
-- **Rate limits**: GitHub allows 10 requests/min unauthenticated, 5,000/hour with a personal access token. The client respects `403` and `X-RateLimit-Remaining` / `X-RateLimit-Reset` and backs off when rate limited.
+- **Rate limits**: **Search API** — 10 requests/min unauthenticated, 30/min with token. **Core API** — 60/hour unauthenticated, 5,000/hour with token. The client respects `403` and `X-RateLimit-Remaining` / `X-RateLimit-Reset` and backs off when rate limited.
 - **Retry**: Up to 5 attempts per request with **exponential backoff** (2s, 4s, 8s, …). On 403 with `X-RateLimit-Reset`, the client may wait until the reset time before retrying.
 
 ---
@@ -60,8 +64,8 @@ The pipeline includes production-style **rate limit monitoring** so you can obse
 
 **GitHub API limits**
 
-- **Unauthenticated**: 60 requests/hour (core), 10 requests/min for search.
-- **Authenticated** (with `GITHUB_TOKEN`): 5,000 requests/hour (core), 30/min for search.
+- **Search**: 10 requests/min unauthenticated, 30/min with token.
+- **Core**: 60 requests/hour unauthenticated, 5,000/hour with token.
 
 Each response includes `X-RateLimit-Limit`, `X-RateLimit-Remaining`, and `X-RateLimit-Reset` (Unix timestamp). Exceeding the limit returns `403` and blocks until the reset time.
 
@@ -104,7 +108,72 @@ Each pipeline run also updates **cumulative** layers so data accumulates until y
 - **Cumulative silver**: `data/silver/cumulative/repositories.parquet` — each run merges that day’s bronze into this file; duplicates are deduplicated by `repo_id` (latest `updated_at` kept).
 - **Cumulative gold**: `data/gold/cumulative/` — same outputs as daily gold (repos_by_*.parquet, repositories.csv, profile.json), built from cumulative silver.
 
-Daily outputs (e.g. `data/gold/2026-02-24/`) are still written; cumulative is updated in addition. To count repos in cumulative gold: `python count_gold_repos.py cumulative`.
+Daily outputs (e.g. `data/gold/2026-02-24/`) are still written; cumulative is updated in addition.
+
+---
+
+## Data profiling
+
+Each run writes **profile.json** next to the layer output:
+
+- **Bronze**: `data/bronze/yyyy-mm-dd/profile.json` — row count, null counts, numeric stats (min/max/mean), value counts for language/owner (top N).
+- **Silver**: `data/silver/yyyy-mm-dd/profile.json` — same structure, on deduplicated silver.
+- **Gold**: `data/gold/yyyy-mm-dd/profile.json` and `data/gold/cumulative/profile.json` — row counts and repo_count sum/min/max per aggregation table.
+
+Use these for quick data-quality checks and column distributions without loading Parquet.
+
+---
+
+## Gold layer – Repository ranking
+
+The gold layer produces **`data/gold/top_repositories.csv`**: a ranked list of repositories by a composite **score** that combines popularity and recency. This simulates a business relevance metric for prioritization and analytics.
+
+**Why the score was created**
+
+- Raw star/fork counts alone do not reflect how *current* a repo is. A repo with many stars but no updates in years may be less relevant than a recently maintained one.
+- A single score (popularity + recency) supports sorting, filtering, and “top N” use cases without duplicating logic.
+
+**How the formula works**
+
+- **Raw score** = `stars × 0.6` + `forks × 0.3` + `recency_factor × 0.1`
+- **score** is then **min-max normalized to 0–100**: the best repo in the dataset gets 100, the worst gets 0 (same relative order as raw).
+- **recency_factor** = `1 / (days_since_update + 1)`:
+  - Recently updated repos get a value close to 1.
+  - Older repos get a smaller value (e.g. 1 year ≈ 1/366).
+  - The `+ 1` avoids division by zero and caps the factor at 1.
+
+Weights (0.6, 0.3, 0.1) emphasize stars, then forks, then recency. They can be tuned in `src/gold/ranking.py`.
+
+**Why recency matters in analytics**
+
+- Stale repos may have outdated docs, unfixed security issues, or incompatible dependencies.
+- Recency helps distinguish actively maintained projects from abandoned ones, improving recommendation and discovery.
+
+**Output**
+
+- Rows are sorted by **score** descending with a **ranking** column (1-based).
+- Columns: `repo_id`, `name`, `repo_url`, `stars`, `forks`, `updated_at`, `language`, `recency_factor`, `score`, `ranking`.
+- Built from cumulative silver in `src/gold/ranking.py`; run after each pipeline execution.
+
+---
+
+## Final Gold Schema
+
+Gold layer outputs and their schemas (column names and purpose):
+
+| Output | Format | Columns |
+|--------|--------|--------|
+| **repositories.csv** | CSV | `repo_url`, `repo_id`, `repo_name`, `owner`, `description`, `language`, `stars`, `forks`, `created_at`, `updated_at`, `watermark_hash` |
+| **repos_by_language.parquet** | Parquet | `language`, `repo_count` |
+| **repos_by_stars_range.parquet** | Parquet | `stars_range`, `repo_count` |
+| **repos_by_year.parquet** | Parquet | `created_year`, `repo_count` |
+| **top_repositories.csv** | CSV | `repo_id`, `name`, `repo_url`, `stars`, `forks`, `updated_at`, `language`, `recency_factor`, `score`, `ranking` |
+
+**Locations**
+
+- **Daily:** `data/gold/yyyy-mm-dd/` — repositories.csv, repos_by_*.parquet, profile.json.
+- **Cumulative:** `data/gold/cumulative/` — same files, built from cumulative silver.
+- **Ranking:** `data/gold/top_repositories.csv` — single file at gold root; built from cumulative silver, score 0–100, sorted by score descending.
 
 ---
 
@@ -134,7 +203,7 @@ GitHubAPIFlow/
 │   ├── raw/yyyy-mm-dd/      # page_1.json, page_2.json, ...
 │   ├── bronze/yyyy-mm-dd/   # repositories.parquet
 │   ├── silver/yyyy-mm-dd/   # year=.../month=.../
-│   └── gold/yyyy-mm-dd/     # repos_by_*.parquet
+│   └── gold/yyyy-mm-dd/     # repos_by_*.parquet; top_repositories.csv at data/gold/
 ├── requirements.txt
 ├── run_pipeline.py          # Entry point
 ├── README.md
@@ -153,6 +222,7 @@ GitHubAPIFlow/
     │   ├── schema.py
     │   └── writer.py
     ├── gold/
+    │   ├── ranking.py   # Score, recency_factor, top_repositories.csv
     │   └── writer.py
     └── utils/
         └── rate_limit.py   # Rate limit logging, metrics, auto-pause
@@ -180,8 +250,9 @@ GitHubAPIFlow/
    ```
    Logs go to console and `pipeline.log`.
 
-4. **Reset and re-run from page 1**
-   - Delete `checkpoint.json`, then run again.
+4. **Useful commands**
+   - Count repos in gold: `python count_gold_repos.py` (today) or `python count_gold_repos.py cumulative`
+   - Reset and re-run from page 1: delete `checkpoint.json`, then run the pipeline again.
 
 ---
 
