@@ -1,0 +1,26 @@
+# GitHub repository search configuration.
+# Edit this file to change what repositories are ingested (no code changes needed).
+# Docs: https://docs.github.com/en/rest/search/search#search-repositories
+
+# Active query used by the pipeline (GitHub allows max 5 OR/AND/NOT per query).
+# Examples:
+#   - '"data pipeline" OR "etl" language:python'
+#   - 'topic:data-engineering language:python'
+#   - 'data pipeline language:python'
+search_query: >-
+  "data pipeline" OR "data engineering" OR "etl pipeline"
+  OR "medallion architecture" language:python
+
+# Pagination (GitHub max 100 per page; max 1000 results per search).
+per_page: 100
+max_search_pages: 10
+
+# Sort order for results (GitHub API: sort=stars|forks|help-wanted-issues|updated, order=desc|asc).
+sort: stars
+order: desc
+
+# Optional: list of additional queries to run in sequence (each gets up to max_search_pages).
+# Uncomment and add entries to ingest more repos from different searches; results are merged into the same pipeline.
+# additional_queries:
+#   - '"elt pipeline" language:python'
+#   - 'topic:etl language:python'
