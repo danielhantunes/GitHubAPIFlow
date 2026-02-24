@@ -22,7 +22,7 @@ GitHub Search API (paginated)
 
 - **Raw**: Immutable copy of API responses; one JSON file per page per day.
 - **Bronze**: Normalized, single-schema Parquet (repo_id, repo_name, owner, description, language, stars, forks, created_at, updated_at).
-- **Silver**: Deduplicated by `repo_id`, schema enforced, `ingestion_timestamp` added, partitioned by repository `created_at` year/month.
+- **Silver**: Deduplicated by `repo_id` (latest `updated_at` kept), schema enforced, `watermark_hash` (row-version key) and `ingestion_timestamp` added, partitioned by repository `created_at` year/month.
 - **Gold**: Simple aggregations: repositories by language, by stars range, by year (created_at).
 
 ---
@@ -60,7 +60,7 @@ GitHub Search API (paginated)
 |--------|--------|---------|
 | Raw    | JSON   | Exact API response per page (`items` + `total_count`) |
 | Bronze | Parquet| One table: normalized repo fields (no partitioning) |
-| Silver | Parquet| Deduped by `repo_id`, schema + `ingestion_timestamp`, partitioned by `year`/`month` of `created_at` |
+| Silver | Parquet| Deduped by `repo_id`, schema + `watermark_hash` + `ingestion_timestamp`, partitioned by `year`/`month` of `created_at` |
 | Gold   | Parquet| Aggregation tables: by language, by stars range, by year |
 
 ---
@@ -73,6 +73,18 @@ Each pipeline run also updates **cumulative** layers so data accumulates until y
 - **Cumulative gold**: `data/gold/cumulative/` — same outputs as daily gold (repos_by_*.parquet, repositories.csv, profile.json), built from cumulative silver.
 
 Daily outputs (e.g. `data/gold/2026-02-24/`) are still written; cumulative is updated in addition. To count repos in cumulative gold: `python count_gold_repos.py cumulative`.
+
+---
+
+## Silver schema and watermark hash
+
+Silver tables include a **`watermark_hash`** column: a SHA-256 hex hash of `repo_id` + `updated_at`. It uniquely identifies each (repo, version) row and is used for:
+
+- **Row-version identity** — Same hash ⇒ same logical snapshot of a repo; different `updated_at` ⇒ different hash.
+- **CDC / idempotent merge** — Downstream systems can use it as a merge key or to detect “already seen” rows.
+- **Auditing** — Compare hashes across runs or tables to see if a row changed.
+
+Computed in the silver layer (see `src/silver/schema.py` and `src/silver/writer.py`); also present in gold `repositories.csv` when built from silver.
 
 ---
 

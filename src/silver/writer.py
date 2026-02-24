@@ -1,4 +1,5 @@
-"""Silver layer: dedupe by repo_id, enforce schema, add ingestion_timestamp, partition by year/month."""
+"""Silver layer: dedupe by repo_id, enforce schema, add watermark_hash and ingestion_timestamp, partition by year/month."""
+import hashlib
 import logging
 from datetime import date, datetime
 from pathlib import Path
@@ -10,6 +11,25 @@ from src.silver.schema import enforce_schema
 from src.profiling import profile_silver
 
 logger = logging.getLogger(__name__)
+
+
+def _compute_watermark_hash(repo_id: int | str, updated_at: str) -> str:
+    """Deterministic hash of repo_id + updated_at for row-version identity (CDC, dedup keys)."""
+    raw = f"{repo_id}_{updated_at or ''}"
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _add_watermark_hash(df: pd.DataFrame) -> pd.DataFrame:
+    """Add watermark_hash column from repo_id and updated_at."""
+    if df.empty:
+        df["watermark_hash"] = pd.Series(dtype="string")
+        return df
+    df = df.copy()
+    df["watermark_hash"] = df.apply(
+        lambda row: _compute_watermark_hash(row.get("repo_id"), row.get("updated_at")),
+        axis=1,
+    )
+    return df
 
 
 def bronze_to_silver(run_date: date | None = None) -> Path:
@@ -37,6 +57,7 @@ def bronze_to_silver(run_date: date | None = None) -> Path:
     df = df.drop_duplicates(subset=["repo_id"], keep="first")
     df = df.drop(columns=["_updated_at_parsed"], errors="ignore")
     df["ingestion_timestamp"] = datetime.utcnow().isoformat() + "Z"
+    df = _add_watermark_hash(df)
     df = enforce_schema(df)
 
     # Partition by year/month from created_at
@@ -81,6 +102,7 @@ def merge_bronze_into_cumulative_silver(run_date: date | None = None) -> Path:
     combined = combined.drop_duplicates(subset=["repo_id"], keep="first")
     combined = combined.drop(columns=["_updated_at_parsed"], errors="ignore")
     combined["ingestion_timestamp"] = datetime.utcnow().isoformat() + "Z"
+    combined = _add_watermark_hash(combined)
     combined = enforce_schema(combined)
 
     CUMULATIVE_SILVER_DIR.mkdir(parents=True, exist_ok=True)

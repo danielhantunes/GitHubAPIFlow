@@ -94,7 +94,7 @@ def _build_gold_from_silver_df(
     if df.empty:
         df = pd.DataFrame(columns=[
             "repo_id", "repo_name", "owner", "description", "language",
-            "stars", "forks", "created_at", "updated_at", "ingestion_timestamp",
+            "stars", "forks", "created_at", "updated_at", "watermark_hash", "ingestion_timestamp",
         ])
     else:
         df = df.drop_duplicates(subset=["repo_id"], keep="first")
@@ -102,7 +102,7 @@ def _build_gold_from_silver_df(
     out_dir.mkdir(parents=True, exist_ok=True)
     csv_cols = [
         "repo_url", "repo_id", "repo_name", "owner", "description",
-        "language", "stars", "forks", "created_at", "updated_at",
+        "language", "stars", "forks", "created_at", "updated_at", "watermark_hash",
     ]
     if not df.empty and "owner" in df.columns and "repo_name" in df.columns:
         repos_df = df.copy()
@@ -152,7 +152,7 @@ def build_cumulative_gold() -> Path:
         CUMULATIVE_GOLD_DIR.mkdir(parents=True, exist_ok=True)
         empty = pd.DataFrame(columns=[
             "repo_id", "repo_name", "owner", "description", "language",
-            "stars", "forks", "created_at", "updated_at", "ingestion_timestamp",
+            "stars", "forks", "created_at", "updated_at", "watermark_hash", "ingestion_timestamp",
         ])
         by_lang, by_stars, by_year = _build_gold_from_silver_df(
             empty, CUMULATIVE_GOLD_DIR, "Cumulative gold"

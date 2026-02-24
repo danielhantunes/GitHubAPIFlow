@@ -11,8 +11,12 @@ SILVER_COLUMNS = [
     "forks",
     "created_at",
     "updated_at",
+    "watermark_hash",
     "ingestion_timestamp",
 ]
+
+# watermark_hash: SHA-256 hex of repo_id + updated_at; unique per (repo_id, updated_at) for row-version identity and CDC.
+WATERMARK_HASH_ALGORITHM = "sha256"
 
 # Coerce types for schema enforcement
 DTYPE_MAP = {
@@ -25,6 +29,7 @@ DTYPE_MAP = {
     "forks": "Int64",
     "created_at": "string",
     "updated_at": "string",
+    "watermark_hash": "string",
     "ingestion_timestamp": "string",
 }
 
