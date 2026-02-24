@@ -157,6 +157,44 @@ Weights (0.6, 0.3, 0.1) emphasize stars, then forks, then recency. They can be t
 
 ---
 
+## LLM enrichment pipeline (optional)
+
+A **second pipeline** enriches `top_repositories.csv` with LLM-derived scores: README quality, cloud usage (AWS/GCP/Azure), and stack mentioned. It is separate from the main ingestion; run it after gold ranking.
+
+**Flow**
+
+1. Read **`data/gold/top_repositories.csv`** (and **`data/gold/top_repositories_enriched.csv`** if it already exists).
+2. Select up to **`--limit`** repos that do **not** yet have `llm_scored_at` (by ranking order).
+3. For each: fetch README via GitHub API, call OpenAI to score, then append columns and set `llm_scored_at`.
+4. Save/update **`data/gold/top_repositories_enriched.csv`** (same rows as top_repositories plus enrichment columns).
+
+**Usage**
+
+```bash
+python run_llm_enrichment.py --limit 10
+python run_llm_enrichment.py --limit 50 --model gpt-4o-mini
+```
+
+**Environment**
+
+- **`OPENAI_API_KEY`** in `.env` (see `.env.example`). If unset, the script runs but skips LLM calls (default scores only).
+- GitHub token in `.env` is used for README fetches (same rate limits as main pipeline).
+
+**Enriched columns**
+
+- `readme_quality_score` (1–10)
+- `uses_cloud_services` (e.g. "AWS, GCP" or "None")
+- `stack_mentioned` (e.g. "Python, Spark, dbt")
+- `llm_summary` (short sentence)
+- `llm_scored_at` (ISO timestamp)
+
+**Idempotency and cost**
+
+- Only repos without `llm_scored_at` are processed; re-runs enrich the next N unscored repos.
+- Rough cost (OpenAI): on the order of ~$0.30–1 for ~1000 repos with a small model; use `--limit` to control how many are scored per run.
+
+---
+
 ## Final Gold Schema
 
 Gold layer outputs and their schemas (column names and purpose):
@@ -168,12 +206,14 @@ Gold layer outputs and their schemas (column names and purpose):
 | **repos_by_stars_range.parquet** | Parquet | `stars_range`, `repo_count` |
 | **repos_by_year.parquet** | Parquet | `created_year`, `repo_count` |
 | **top_repositories.csv** | CSV | `repo_id`, `name`, `repo_url`, `stars`, `forks`, `updated_at`, `language`, `recency_factor`, `score`, `ranking` |
+| **top_repositories_enriched.csv** | CSV | Same as top_repositories plus `readme_quality_score`, `uses_cloud_services`, `stack_mentioned`, `llm_summary`, `llm_scored_at` |
 
 **Locations**
 
 - **Daily:** `data/gold/yyyy-mm-dd/` — repositories.csv, repos_by_*.parquet, profile.json.
 - **Cumulative:** `data/gold/cumulative/` — same files, built from cumulative silver.
 - **Ranking:** `data/gold/top_repositories.csv` — single file at gold root; built from cumulative silver, score 0–100, sorted by score descending.
+- **Enriched:** `data/gold/top_repositories_enriched.csv` — optional; produced by `run_llm_enrichment.py` with LLM score columns.
 
 ---
 
@@ -205,11 +245,16 @@ GitHubAPIFlow/
 │   ├── silver/yyyy-mm-dd/   # year=.../month=.../
 │   └── gold/yyyy-mm-dd/     # repos_by_*.parquet; top_repositories.csv at data/gold/
 ├── requirements.txt
-├── run_pipeline.py          # Entry point
+├── run_pipeline.py          # Entry point (ingestion + medallion + ranking)
+├── run_llm_enrichment.py    # Optional: LLM enrichment of top_repositories
 ├── README.md
 └── src/
     ├── config.py            # Env vars, paths, loads search from YAML
     ├── logging_config.py
+    ├── enrich/              # README fetch + LLM scoring (optional pipeline)
+    │   ├── readme_fetcher.py
+    │   ├── llm_scorer.py
+    │   └── runner.py
     ├── extract/
     │   ├── github_client.py # API + pagination + retry
     │   └── checkpoint.py
@@ -252,6 +297,7 @@ GitHubAPIFlow/
 
 4. **Useful commands**
    - Count repos in gold: `python count_gold_repos.py` (today) or `python count_gold_repos.py cumulative`
+   - Enrich top repos with LLM: `python run_llm_enrichment.py --limit 10` (requires `OPENAI_API_KEY` in `.env`)
    - Reset and re-run from page 1: delete `checkpoint.json`, then run the pipeline again.
 
 ---

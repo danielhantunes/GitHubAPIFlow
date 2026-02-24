@@ -4,3 +4,6 @@ pyarrow>=14.0.0
 pandas>=2.0.0
 python-dotenv>=1.0.0
 PyYAML>=6.0
+
+# LLM enrichment (optional second pipeline)
+openai>=1.0.0
