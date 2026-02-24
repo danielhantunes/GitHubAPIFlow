@@ -152,7 +152,7 @@ Weights (0.6, 0.3, 0.1) emphasize stars, then forks, then recency. They can be t
 **Output**
 
 - Rows are sorted by **score** descending with a **ranking** column (1-based).
-- Columns: `repo_id`, `name`, `repo_url`, `stars`, `forks`, `updated_at`, `language`, `recency_factor`, `score`, `ranking`.
+- Columns: `repo_id`, `name`, `repo_url`, `stars`, `forks`, `updated_at`, `language`, `recency_factor`, `score`, `ranking`, plus enrichment columns (empty until `run_llm_enrichment.py` runs): `readme_quality_score`, `uses_cloud_services`, `stack_mentioned`, `llm_summary`, `llm_scored_at`.
 - Built from cumulative silver in `src/gold/ranking.py`; run after each pipeline execution.
 
 ---
@@ -185,7 +185,7 @@ python run_llm_enrichment.py --limit 50 --model gpt-4o-mini
 - `readme_quality_score` (1–10)
 - `uses_cloud_services` (e.g. "AWS, GCP" or "None")
 - `stack_mentioned` (e.g. "Python, Spark, dbt")
-- `llm_summary` (short sentence)
+- `llm_summary` (LLM-generated summary; max 6000 characters)
 - `llm_scored_at` (ISO timestamp)
 
 **Idempotency and cost**
@@ -245,6 +245,7 @@ GitHubAPIFlow/
 ├── requirements.txt
 ├── run_pipeline.py          # Entry point (ingestion + medallion + ranking)
 ├── run_llm_enrichment.py    # Optional: LLM enrichment of top_repositories
+├── count_gold_repos.py      # Count repos (today or cumulative)
 ├── README.md
 └── src/
     ├── config.py            # Env vars, paths, loads search from YAML
