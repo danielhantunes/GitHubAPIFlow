@@ -2,6 +2,8 @@
 
 Paginated ingestion pipeline using the **GitHub REST API** to collect repositories related to data engineering, stored in a lightweight **Medallion architecture** (raw → bronze → silver → gold).
 
+> 🚧 **This project is under active development and continuously evolving.** The current state already reflects production-oriented design decisions.
+
 ---
 
 ## Architecture
